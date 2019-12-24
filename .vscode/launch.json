@@ -1,0 +1,22 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": 
+            [
+                "--data-path", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2017", 
+                "-j", "0",
+                "--pretrained",
+                "--model", "fasterrcnn_resnet50_fpn"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}

@@ -1,2 +1,3 @@
 images_eval_bin/*.bin
 *.pyc
+.vscode/settings.json

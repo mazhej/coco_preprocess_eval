@@ -111,7 +111,7 @@ def dg_main(args):
     model.to(device)
     
     if args.test_only:
-        evaluate()
+        evaluate(model, data_loader_test, device=device, bin_folder = args.bin)
     else:
         preprocess_and_save_bin(model, data_loader_test, device=device)
 
@@ -146,31 +146,9 @@ def preprocess_and_save_bin(model, data_loader, device):
 
     torch.set_num_threads(n_threads)
 
-def evaluate():
-    device = torch.device(args.device)
+@torch.no_grad()
+def evaluate(model, data_loader, device, bin_folder ):
 
-    dataset_test, num_classes = get_dataset(args.dataset, "val", get_transform(train=False), args.data_path)
-    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
-
-
-    data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=1,
-        sampler=test_sampler, num_workers=0,
-        collate_fn=utils.collate_fn)
-
-    print("Creating model")
-    model = detection.__dict__[args.model](num_classes=num_classes,
-                                                              pretrained=args.pretrained)
-    
-    model.to(device)
-    
-    
-  
-        
-    
-    
-
-    ####
     n_threads = torch.get_num_threads()
     # FIXME remove this and make paste_masks_in_image run on the GPU
     torch.set_num_threads(1)
@@ -179,33 +157,31 @@ def evaluate():
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
 
-    coco = get_coco_api_from_dataset(data_loader_test.dataset)
+    coco = get_coco_api_from_dataset(data_loader.dataset)
     iou_types = _get_iou_types(model)
     coco_evaluator = CocoEvaluator(coco, iou_types)
-    my_dictionary = {}
-    bin_folder = "/home/maziar/WA/eval_res/distiller/bins/"
+    bin_folder = bin_folder
+    jsonPath = os.path.join( args.output_dir, 'images_shape.json')
+    with open(jsonPath) as json_file:
+        shape_dict = json.load(json_file)
+    #  
+    model.transform = IdentityTransform(model.transform.min_size, model.transform.max_size, model.transform.image_mean, model.transform.image_std)
 
-    for image, targets in metric_logger.log_every(data_loader_test, 100, header):
+    for image, targets in metric_logger.log_every(data_loader, 100, header):
         image = list(img.to(device) for img in image)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        with open('/home/maziar/WA/eval_res/distiller/bins/data.json') as json_file:
-            shape_dict = json.load(json_file)
-        path = os.path.join(bin_folder, str(targets[0]['image_id'].numpy()[0]) +'.bin')
-        image_id = targets[0]['image_id'].numpy()[0]
+
+        img_id = targets[0]['image_id'].cpu().numpy()[0]
+        path = os.path.join(bin_folder, str(img_id) +'.bin')
         f = open(path, 'rb')
-        data = np.fromfile(f, np.float32)
-        data = np.reshape(data, shape_dict[str(image_id)])
+        transformed_img = np.fromfile(f, np.float32)
+        transformed_img = np.reshape(transformed_img, shape_dict[str(img_id)])
 
-        data_T = torch.from_numpy(data)
+        transformed_img_T = torch.from_numpy(transformed_img)
        
-
         torch.cuda.synchronize()
         model_time = time.time()
-        model.transform = IdentityTransform(model.transform.min_size, model.transform.max_size, model.transform.image_mean, model.transform.image_std)
-        outputs = model(data_T)
-        
-        
-   
+        outputs = model(transformed_img_T)
 
         outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
         model_time = time.time() - model_time
@@ -239,6 +215,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--data-path', default='/datasets01/COCO/022719/', help='dataset')
     parser.add_argument('--dataset', default='coco', help='dataset')
+    parser.add_argument('--bin',default="/home/maziar/WA/Git/coco_preprocess_eval/images_eval_bin")
     parser.add_argument('--model', default='maskrcnn_resnet50_fpn', help='model')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('-b', '--batch-size', default=2, type=int)

@@ -15,7 +15,53 @@ import transforms as T
 from coco_utils import get_coco, get_coco_kp
 from coco_utils import get_coco_api_from_dataset
 from coco_eval import CocoEvaluator
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
+from coco_utils import get_coco_api_from_dataset
 # 
+class ImageList(object):
+    """
+    Structure that holds a list of images (of possibly
+    varying sizes) as a single tensor.
+    This works by padding the images to the same size,
+    and storing in a field the original sizes of each image
+    """
+
+    def __init__(self, tensors, image_sizes):
+        """
+        Arguments:
+            tensors (tensor)
+            image_sizes (list[tuple[int, int]])
+        """
+        self.tensors = tensors
+        self.image_sizes = image_sizes
+
+    def to(self, *args, **kwargs):
+        cast_tensor = self.tensors.to(*args, **kwargs)
+        return ImageList(cast_tensor, self.image_sizes)
+
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
+
+class IdentityTransform(GeneralizedRCNNTransform):
+   
+    def forward(self, images, targets=None):
+        images = [img for img in images]
+        for i in range(len(images)):
+            image = images[i]
+            target = targets[i] if targets is not None else targets
+            if image.dim() != 3:
+                raise ValueError("images is expected to be a list of 3d tensors "
+                                 "of shape [C, H, W], got {}".format(image.shape))
+            
+            image = image
+            image, target = image, target
+            images[i] = image
+            if targets is not None:
+                targets[i] = target
+
+        image_sizes = [img.shape[-2:] for img in images]
+        images = self.batch_images(images)
+        image_list = ImageList(images, image_sizes)
+        return image_list, targets
 
 def get_dataset(name, image_set, transform, data_path):
     paths = {
@@ -64,7 +110,10 @@ def dg_main(args):
     # patch_fastrcnn(model)
     model.to(device)
     
-    preprocess_and_save_bin(model, data_loader_test, device=device)
+    if args.test_only:
+        evaluate()
+    else:
+        preprocess_and_save_bin(model, data_loader_test, device=device)
 
 
 @torch.no_grad()
@@ -95,6 +144,87 @@ def preprocess_and_save_bin(model, data_loader, device):
     with open(jsonPath, 'w') as fp:
         json.dump(shape_dict, fp)
 
+    torch.set_num_threads(n_threads)
+
+def evaluate():
+    device = torch.device(args.device)
+
+    dataset_test, num_classes = get_dataset(args.dataset, "val", get_transform(train=False), args.data_path)
+    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+
+
+    data_loader_test = torch.utils.data.DataLoader(
+        dataset_test, batch_size=1,
+        sampler=test_sampler, num_workers=0,
+        collate_fn=utils.collate_fn)
+
+    print("Creating model")
+    model = detection.__dict__[args.model](num_classes=num_classes,
+                                                              pretrained=args.pretrained)
+    
+    model.to(device)
+    
+    
+  
+        
+    
+    
+
+    ####
+    n_threads = torch.get_num_threads()
+    # FIXME remove this and make paste_masks_in_image run on the GPU
+    torch.set_num_threads(1)
+    cpu_device = torch.device("cpu")
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    coco = get_coco_api_from_dataset(data_loader_test.dataset)
+    iou_types = _get_iou_types(model)
+    coco_evaluator = CocoEvaluator(coco, iou_types)
+    my_dictionary = {}
+    bin_folder = "/home/maziar/WA/eval_res/distiller/bins/"
+
+    for image, targets in metric_logger.log_every(data_loader_test, 100, header):
+        image = list(img.to(device) for img in image)
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        with open('/home/maziar/WA/eval_res/distiller/bins/data.json') as json_file:
+            shape_dict = json.load(json_file)
+        path = os.path.join(bin_folder, str(targets[0]['image_id'].numpy()[0]) +'.bin')
+        image_id = targets[0]['image_id'].numpy()[0]
+        f = open(path, 'rb')
+        data = np.fromfile(f, np.float32)
+        data = np.reshape(data, shape_dict[str(image_id)])
+
+        data_T = torch.from_numpy(data)
+       
+
+        torch.cuda.synchronize()
+        model_time = time.time()
+        model.transform = IdentityTransform(model.transform.min_size, model.transform.max_size, model.transform.image_mean, model.transform.image_std)
+        outputs = model(data_T)
+        
+        
+   
+
+        outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
+        model_time = time.time() - model_time
+
+        res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
+        evaluator_time = time.time()
+        coco_evaluator.update(res)
+        evaluator_time = time.time() - evaluator_time
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    coco_evaluator.synchronize_between_processes()
+
+    # accumulate predictions from all images
+    coco_evaluator.accumulate()
+    coco_evaluator.summarize()
     torch.set_num_threads(n_threads)
 
     

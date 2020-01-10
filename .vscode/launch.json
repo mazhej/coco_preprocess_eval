@@ -6,15 +6,20 @@
     "configurations": [
         {
             "name": "Python: Current File",
+            "justMyCode": false,
             "type": "python",
             "request": "launch",
             "program": "${file}",
             "args": 
             [
-                "--data-path", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2017", 
+                "--bin","/home/maziar/WA/Git/coco_preprocess_eval/images_eval_bin"
+                "--data-path", "/home/maziar/WA/eval_res/distiller/data",
+                //"--data-path","/home/maziar/WA/OI/convert_openIm_coco" 
                 "-j", "0",
                 "--pretrained",
-                "--model", "fasterrcnn_resnet50_fpn"
+                "--model", "fasterrcnn_resnet50_fpn",
+                
+                "--bin-evaluate"
             ],
             "console": "integratedTerminal"
         }

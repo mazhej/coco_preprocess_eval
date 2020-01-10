@@ -137,7 +137,8 @@ def preprocess_and_save_bin(model, data_loader, device):
         filePath = os.path.join( args.output_dir, str(img_id) + '.bin')
         transformed_np_img = transformed_image[0].tensors.cpu().numpy()
         transformed_np_img.tofile(filePath) 
-        shape_dict[str(img_id)] = transformed_np_img.shape
+        shape_dict[str(img_id)] = [[transformed_np_img.shape ],[ transformed_image[0].image_sizes[0][:]]]
+    
 
 
 
@@ -155,7 +156,6 @@ def evaluate_bin(model, data_loader, device, bin_folder ):
     # FIXME remove this and make paste_masks_in_image run on the GPU
     torch.set_num_threads(1)
     cpu_device = torch.device("cpu")
-    model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
 
@@ -168,24 +168,32 @@ def evaluate_bin(model, data_loader, device, bin_folder ):
         shape_dict = json.load(json_file)
     #  
     model.transform = IdentityTransform(model.transform.min_size, model.transform.max_size, model.transform.image_mean, model.transform.image_std)
-
+    model.eval()
     for image, targets in metric_logger.log_every(data_loader, 100, header):
         image = list(img.to(device) for img in image)
+        original_image_sizes = [img.shape[-2:] for img in image]
+
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         img_id = targets[0]['image_id'].cpu().numpy()[0]
         path = os.path.join(bin_folder, str(img_id) +'.bin')
         f = open(path, 'rb')
         transformed_img = np.fromfile(f, np.float32)
-        transformed_img = np.reshape(transformed_img, shape_dict[str(img_id)])
+        transformed_img = np.reshape(transformed_img, shape_dict[str(img_id)][0][0]) 
+        
+        image_sizes_not_devisible = np.asarray(shape_dict[str(img_id)][1][0])
+        image_sizes_not_devisible=torch.from_numpy(image_sizes_not_devisible)
 
         transformed_img_T = torch.from_numpy(transformed_img)
+        transformed_img_T = transformed_img_T.to(device)
        
         torch.cuda.synchronize()
         model_time = time.time()
         outputs = model(transformed_img_T)
 
         outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
+        outputs = model.transform.postprocess(outputs, [image_sizes_not_devisible], original_image_sizes)
+
         model_time = time.time() - model_time
 
         res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}

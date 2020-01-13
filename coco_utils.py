@@ -34,14 +34,14 @@ class FilterAndRemapCocoCategories(object):
 
 def convert_coco_poly_to_mask(segmentations, height, width):
     masks = []
-    for polygons in segmentations:
-        rles = coco_mask.frPyObjects(polygons, height, width)
-        mask = coco_mask.decode(rles)
-        if len(mask.shape) < 3:
-            mask = mask[..., None]
-        mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
-        masks.append(mask)
+    # for polygons in segmentations:
+    #     rles = coco_mask.frPyObjects(polygons, height, width)
+    #     mask = coco_mask.decode(rles)
+    #     if len(mask.shape) < 3:
+    #         mask = mask[..., None]
+    #     mask = torch.as_tensor(mask, dtype=torch.uint8)
+    #     mask = mask.any(dim=2)
+    #     masks.append(mask)
     if masks:
         masks = torch.stack(masks, dim=0)
     else:
@@ -84,7 +84,7 @@ class ConvertCocoPolysToMask(object):
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
         classes = classes[keep]
-        masks = masks[keep]
+        # masks = masks[keep]
         if keypoints is not None:
             keypoints = keypoints[keep]
 

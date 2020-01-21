@@ -14,9 +14,11 @@
                 "--data-path", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2017", 
                 "-j", "0",
                 "--pretrained",
-                "--model", "fasterrcnn_resnet50_fpn"
+                "--model", "fasterrcnn_resnet50_fpn",
+                "--evaluate"
             ],
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }

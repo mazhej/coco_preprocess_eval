@@ -1,3 +1,9 @@
 images_eval_bin/*.bin
 *.pyc
 .vscode/settings.json
+
+yolo_weights/*
+!yolo_weights/*.sh
+
+yolo_data/*
+!yolo_data/*.sh

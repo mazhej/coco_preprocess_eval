@@ -8,14 +8,20 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/create_binary_files_from_input_image.py",
             "args": 
             [
                 "--data-path", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2017", 
                 "-j", "0",
+                "-b", "4",
                 "--pretrained",
                 "--model", "fasterrcnn_resnet50_fpn",
-                "--evaluate"
+                // "--model", "yolo",
+                "--evaluate",
+                "--dataset", "coco",
+                "--rect",
+                "--weights", "yolo_weights/ultralytics68.pt",
+                "--cfg", "yolo_cfg/yolov3-spp.cfg",
             ],
             "console": "integratedTerminal",
             "justMyCode": false

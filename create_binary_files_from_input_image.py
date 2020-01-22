@@ -1,8 +1,6 @@
 import torch
 import torchvision.models.detection as detection
 import io
-import math
-import sys
 import time
 import torch
 import json

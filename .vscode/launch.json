@@ -13,8 +13,8 @@
             "args": 
             [
                 "--bin","/home/maziar/WA/Git/coco_preprocess_eval/images_eval_bin",
-                //"--data-path", "/home/maziar/WA/eval_res/distiller/data",
-                "--data-path","/home/maziar/WA/OI/convert_openIm_coco" ,
+                "--data-path", "/home/maziar/WA/eval_res/distiller/data",
+                //"--data-path","/home/maziar/WA/OI/convert_openIm_coco" ,
                 "-j", "0",
                 "--pretrained",
                 "--model", "fasterrcnn_resnet50_fpn",

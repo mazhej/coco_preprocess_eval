@@ -15,12 +15,14 @@
                 "-j", "0",
                 "-b", "4",
                 "--pretrained",
-                "--model", "fasterrcnn_resnet50_fpn",
-                // "--model", "yolo",
-                "--dataset", "coco",
-                "--rect",
+                // "--model", "fasterrcnn_resnet50_fpn",
+                "--model", "yolo",
+                "--dataset", "coco2014",
+                // "--rect",
                 "--weights", "yolo_weights/ultralytics68.pt",
                 "--cfg", "yolo_cfg/yolov3-spp.cfg",
+                "--bin-evaluate",
+                "--bin-folder", "coco2014_eval_bin"
             ],
             "console": "integratedTerminal",
             // "justMyCode": false

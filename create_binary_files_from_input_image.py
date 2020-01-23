@@ -1,4 +1,8 @@
 import torch
+from pathlib import Path
+import os
+import json
+# 
 import utils
 from models import load_model
 from dataset import get_coco_dataloader
@@ -53,46 +57,36 @@ def preprocess_and_save_bin(model, data_loader, device):
 
 @torch.no_grad()
 def preprocess_and_save_bin_yolo_2014(model, data_loader, device):
-    n_threads = torch.get_num_threads()
-    # FIXME remove this and make paste_masks_in_image run on the GPU
-    torch.set_num_threads(1)
-    cpu_device = torch.device("cpu")
+    
     model.eval()
-    coco = get_coco_api_from_dataset(data_loader.dataset)
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
     shape_dict = {}
-    for image, targets in data_loader:
-        image = list(img.to(device) for img in image)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+    for imgs, targets, paths, shapes in metric_logger.log_every(data_loader, 10, header):
 
-        transformed_image = model.transform(image)
+        image_id = int(Path(paths[0]).stem.split('_')[-1])
 
-        img_id = targets[0]['image_id'].cpu().numpy()[0]
-        filePath = os.path.join( args.output_dir, str(img_id) + '.bin')
-        transformed_np_img = transformed_image[0].tensors.cpu().numpy()
+        filePath = os.path.join( args.output_dir, str(image_id) + '.bin')
+        transformed_np_img = imgs[0].cpu().numpy()
         transformed_np_img.tofile(filePath) 
-        shape_dict[str(img_id)] = [[transformed_np_img.shape ],[ transformed_image[0].image_sizes[0][:]]]
+        shape_dict[str(image_id)] = [transformed_np_img.shape[1:], shapes]
 
     # gather the stats from all processes
     jsonPath = os.path.join( args.output_dir, 'images_shape.json')
     with open(jsonPath, 'w') as fp:
         json.dump(shape_dict, fp)
 
-    torch.set_num_threads(n_threads)
-
 @torch.no_grad()
 def preprocess_and_save_bin_yolo_2017(model, data_loader, device):
-    n_threads = torch.get_num_threads()
-    # FIXME remove this and make paste_masks_in_image run on the GPU
-    torch.set_num_threads(1)
-    cpu_device = torch.device("cpu")
+    #  Not Complete !
     model.eval()
-    coco = get_coco_api_from_dataset(data_loader.dataset)
-    shape_dict = {}
-    for image, targets in data_loader:
-        image = list(img.to(device) for img in image)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+    jdict = []
+    for imgs, targets, paths, shapes in metric_logger.log_every(data_loader, 10, header):
 
-        transformed_image = model.transform(image)
+        image_id = int(Path(paths[si]).stem.split('_')[-1])
+
 
         img_id = targets[0]['image_id'].cpu().numpy()[0]
         filePath = os.path.join( args.output_dir, str(img_id) + '.bin')
@@ -118,8 +112,8 @@ if __name__ == "__main__":
     parser.add_argument('--bin',default="/home/maziar/WA/Git/coco_preprocess_eval/images_eval_bin")
     parser.add_argument('--model', default='maskrcnn_resnet50_fpn', help='model')
     parser.add_argument('--device', default='cuda', help='device')
-    parser.add_argument('-b', '--batch-size', default=2, type=int)
-    parser.add_argument('--output-dir', default='./images_eval_bin', help='path where to save')
+    parser.add_argument('-b', '--batch-size', default=1, type=int)
+    parser.add_argument('--output-dir', default='./coco2014_eval_bin', help='path where to save')
     parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
     parser.add_argument('--weights', default='yolo_weights/yolov3-spp.weights', help='path to weights file')
@@ -131,7 +125,9 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained", dest="pretrained", help="Use pre-trained models from the modelzoo", action="store_true")
 
     args = parser.parse_args()
-
+    # force batch_size = 1
+    args.batch_size = 1
+    # 
     if args.output_dir:
         utils.mkdir(args.output_dir)
 

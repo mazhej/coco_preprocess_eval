@@ -1,4 +1,4 @@
-images_eval_bin/*.bin
+*.bin
 *.pyc
 .vscode/settings.json
 

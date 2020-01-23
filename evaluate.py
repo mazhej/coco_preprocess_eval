@@ -9,6 +9,8 @@ from coco_eval import CocoEvaluator
 from torchvision.models.detection.transform import GeneralizedRCNNTransform
 from torchvision.models.detection import MaskRCNN
 from torchvision.models.detection import KeypointRCNN
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 # 
 from yolo_utils.utils import coco80_to_coco91_class, non_max_suppression, clip_coords, scale_coords, xyxy2xywh, floatn
 from pathlib import Path
@@ -17,6 +19,23 @@ from models import load_model
 from dataset import get_coco_dataloader
 
 coco91class = coco80_to_coco91_class()
+
+annotation_path = '/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2014/images/annotations/instances_val2014.json'
+
+def coco_eval_json(annotation_path, jdict, imgIds):
+    # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
+    cocoGt = COCO(annotation_path)  # initialize COCO ground truth api
+    cocoDt = cocoGt.loadRes(jdict)  # initialize COCO pred api
+
+    # imgIds=imgIds[0:100]
+    # imgId = imgIds[np.random.randint(100)]
+
+    cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
+    cocoEval.params.imgIds = imgIds  # [:32]  # only evaluate these images
+    cocoEval.evaluate()
+    cocoEval.accumulate()
+    cocoEval.summarize()
+    return cocoEval
 
 class ImageList(object):
     """
@@ -87,7 +106,7 @@ def evaluate_bin(model, data_loader, device, bin_folder ):
     coco = get_coco_api_from_dataset(data_loader.dataset)
     iou_types = _get_iou_types(model)
     coco_evaluator = CocoEvaluator(coco, iou_types)
-    bin_folder = bin_folder
+
     jsonPath = os.path.join( args.output_dir, 'images_shape.json')
     with open(jsonPath) as json_file:
         shape_dict = json.load(json_file)
@@ -276,67 +295,96 @@ def evaluate_yolo_2014(model, data_loader, device):
     header = 'Test:'
 
     jdict = []
-    for imgs, targets, paths, shapes in metric_logger.log_every(data_loader, 10, header):
-
-        imgs = imgs.to(device).float() / 255.0  # uint8 to float32, 0 - 255 to 0.0 - 1.0
-        targets = targets.to(device)
-        _, _, height, width = imgs.shape  # batch size, channels, height, width
-        
-        torch.cuda.synchronize()
-        model_time = time.time()
-        inf_out, _ = model(imgs)  # inference and training outputs
-        # Run NMS
-        output = non_max_suppression(inf_out, conf_thres=0.001, iou_thres=0.6)
-        model_time = time.time() - model_time
-        # add eval to json
-        evaluator_time = time.time()
-        # Statistics per image
-        for si, pred in enumerate(output):
-            if pred is None:
-                continue
-            # Append to text file
-            # with open('test.txt', 'a') as file:
-            #    [file.write('%11.5g' * 7 % tuple(x) + '\n') for x in pred]
-
-            # Clip boxes to image bounds
-            clip_coords(pred, (height, width))
-            # Append to pycocotools JSON dictionary
-            # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
-            image_id = int(Path(paths[si]).stem.split('_')[-1])
-            box = pred[:, :4].clone()  # xyxy
-            scale_coords(imgs[si].shape[1:], box, shapes[si][0], shapes[si][1])  # to original shape
-            box = xyxy2xywh(box)  # xywh
-            box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-            for di, d in enumerate(pred):
-                jdict.append({'image_id': image_id,
-                                'category_id': coco91class[int(d[5])],
-                                'bbox': [floatn(x, 3) for x in box[di]],
-                                'score': floatn(d[4], 5)})
-
-        evaluator_time = time.time() - evaluator_time
+    imgIds = []
+    for imgs, _ , paths, shapes in metric_logger.log_every(data_loader, 10, header):
+        image_ids = [ int(Path(image_path).stem.split('_')[-1]) for image_path in paths]
+        imgIds.extend(image_ids)
+        # Evaluate one batch
+        model_time, evaluator_time = eval_yolo_2014_batch(jdict, model, imgs, image_ids, shapes, device)
         metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
 
+    # imgIds = [int(Path(x).stem.split('_')[-1]) for x in data_loader.dataset.img_files]
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-
-    from pycocotools.coco import COCO
-    from pycocotools.cocoeval import COCOeval
-
-    # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-    cocoGt = COCO(glob.glob('/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2014/images/annotations/instances_val*.json')[0])  # initialize COCO ground truth api
-    cocoDt = cocoGt.loadRes(jdict)  # initialize COCO pred api
-
-    imgIds = [int(Path(x).stem.split('_')[-1]) for x in data_loader.dataset.img_files]
-    # imgIds=imgIds[0:100]
-    # imgId = imgIds[np.random.randint(100)]
-
-    cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
-    cocoEval.params.imgIds = imgIds  # [:32]  # only evaluate these images
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
+    # coco evel
+    cocoEval = coco_eval_json(annotation_path, jdict, imgIds)
     return cocoEval
+
+@torch.no_grad()
+def evaluate_bin_yolo_2014(model, data_loader, device, bin_folder):
+
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    jdict = []
+    imgIds = []
+    for imgs, _ , paths, shapes in metric_logger.log_every(data_loader, 10, header):
+        image_ids = [ int(Path(image_path).stem.split('_')[-1]) for image_path in paths]
+        imgIds.extend(image_ids)
+        # convert bin files 2 tensor
+        imgs_tensor = torch.tensor([], dtype=torch.uint8)
+        for i, img_id in enumerate(image_ids):
+            path = os.path.join(bin_folder, str(img_id) +'.bin')
+            f = open(path, 'rb')
+            img_from_file = np.fromfile(f, np.uint8)
+            img_from_file = np.reshape(img_from_file, imgs[i].shape)
+            img_T = torch.tensor(img_from_file).unsqueeze(0)
+            imgs_tensor = torch.cat((imgs_tensor, img_T), 0)
+
+        # Evaluate one batch
+        model_time, evaluator_time = eval_yolo_2014_batch(jdict, model, imgs_tensor, image_ids, shapes, device)
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+    # imgIds = [int(Path(x).stem.split('_')[-1]) for x in data_loader.dataset.img_files]
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    # coco evel
+    cocoEval = coco_eval_json(annotation_path, jdict, imgIds)
+    return cocoEval
+
+def eval_yolo_2014_batch(jdict, model, imgs, image_ids, shapes, device):
+
+    imgs = imgs.to(device).float() / 255.0  # uint8 to float32, 0 - 255 to 0.0 - 1.0
+    _, _, height, width = imgs.shape  # batch size, channels, height, width
+    
+    torch.cuda.synchronize()
+    model_time = time.time()
+    inf_out, _ = model(imgs)  # inference and training outputs
+    # Run NMS
+    output = non_max_suppression(inf_out, conf_thres=0.001, iou_thres=0.6)
+    model_time = time.time() - model_time
+    # add eval to json
+    evaluator_time = time.time()
+    # Statistics per image
+    for si, pred in enumerate(output):
+        if pred is None:
+            continue
+        # Append to text file
+        # with open('test.txt', 'a') as file:
+        #    [file.write('%11.5g' * 7 % tuple(x) + '\n') for x in pred]
+
+        # Clip boxes to image bounds
+        clip_coords(pred, (height, width))
+        # Append to pycocotools JSON dictionary
+        # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
+        image_id = image_ids[si]
+        box = pred[:, :4].clone()  # xyxy
+        scale_coords(imgs[si].shape[1:], box, shapes[si][0], shapes[si][1])  # to original shape
+        box = xyxy2xywh(box)  # xywh
+        box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
+        for di, d in enumerate(pred):
+            jdict.append({'image_id': image_id,
+                            'category_id': coco91class[int(d[5])],
+                            'bbox': [floatn(x, 3) for x in box[di]],
+                            'score': floatn(d[4], 5)})
+    evaluator_time = time.time() - evaluator_time
+    
+    return model_time, evaluator_time
+
+
 
 def dg_evaluate(args):
     # Loading val dataset
@@ -348,7 +396,11 @@ def dg_evaluate(args):
     model.to(device)
     
     if args.bin_evaluate:
-        evaluate_bin(model, data_loader_test, device=device, bin_folder = args.bin_folder)
+        if (args.model == 'yolo'):
+            if (args.dataset == 'coco2014'):
+                evaluate_bin_yolo_2014(model, data_loader_test, device=device, bin_folder = args.bin_folder) 
+        else:
+            evaluate_bin(model, data_loader_test, device=device, bin_folder = args.bin_folder)
     else:
         if (args.model == 'yolo'):
             if (args.dataset == 'coco2014'):

@@ -7,3 +7,4 @@ yolo_weights/*
 
 yolo_data/*
 !yolo_data/*.sh
+eval_results/*

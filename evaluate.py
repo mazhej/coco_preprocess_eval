@@ -18,6 +18,9 @@ import utils
 from models import load_model
 from dataset import get_coco_dataloader
 
+# from InputOutputHook import Hook
+from collections import defaultdict
+
 coco91class = coco80_to_coco91_class()
 
 annotation_path = '/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2014/images/annotations/instances_val2014.json'
@@ -319,6 +322,7 @@ def evaluate_bin_yolo_2014(model, data_loader, device, bin_folder):
     header = 'Test:'
 
     jdict = []
+    jdict_not_resized = []          # To compare with HW
     imgIds = []
     for imgs, _ , paths, shapes in metric_logger.log_every(data_loader, 10, header):
         image_ids = [ int(Path(image_path).stem.split('_')[-1]) for image_path in paths]
@@ -334,22 +338,30 @@ def evaluate_bin_yolo_2014(model, data_loader, device, bin_folder):
             imgs_tensor = torch.cat((imgs_tensor, img_T), 0)
 
         # Evaluate one batch
-        model_time, evaluator_time = eval_yolo_2014_batch(jdict, model, imgs_tensor, image_ids, shapes, device)
+        model_time, evaluator_time = eval_yolo_2014_batch(jdict, jdict_not_resized, model, imgs_tensor, image_ids, shapes, device)
         metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
 
     # imgIds = [int(Path(x).stem.split('_')[-1]) for x in data_loader.dataset.img_files]
     # gather the stats from all processes
+    # with open('jdict_not_resized.json', 'w') as f:
+    #     json.dump(jdict_not_resized, f)
+
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     # coco evel
     cocoEval = coco_eval_json(annotation_path, jdict, imgIds)
     return cocoEval
 
-def eval_yolo_2014_batch(jdict, model, imgs, image_ids, shapes, device):
+def eval_yolo_2014_batch(jdict, jdict_not_resized, model, imgs, image_ids, shapes, device):
 
     imgs = imgs.to(device).float() / 255.0  # uint8 to float32, 0 - 255 to 0.0 - 1.0
     _, _, height, width = imgs.shape  # batch size, channels, height, width
     
+    # Adding Hooks : create a dictionary of module names
+    # hookF = {}
+    # for name, module in model.named_modules():
+    #     hookF[name] = Hook(module)
+
     torch.cuda.synchronize()
     model_time = time.time()
     inf_out, _ = model(imgs)  # inference and training outputs
@@ -371,19 +383,80 @@ def eval_yolo_2014_batch(jdict, model, imgs, image_ids, shapes, device):
         # Append to pycocotools JSON dictionary
         # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
         image_id = image_ids[si]
-        box = pred[:, :4].clone()  # xyxy
+        not_resized_box = pred[:, :4].clone()  # xyxy
+        box = not_resized_box.clone()
+        
         scale_coords(imgs[si].shape[1:], box, shapes[si][0], shapes[si][1])  # to original shape
         box = xyxy2xywh(box)  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
+
         for di, d in enumerate(pred):
             jdict.append({'image_id': image_id,
                             'category_id': coco91class[int(d[5])],
                             'bbox': [floatn(x, 3) for x in box[di]],
                             'score': floatn(d[4], 5)})
+
+        # To compare with HW
+        for di, d in enumerate(pred):
+            jdict_not_resized.append({'image_id': image_id,
+                            'category_id': coco91class[int(d[5])],
+                            'bbox': [floatn(x, 3) for x in not_resized_box[di]],
+                            'score': floatn(d[4], 5)})
+
     evaluator_time = time.time() - evaluator_time
     
     return model_time, evaluator_time
 
+def eval_yolo_2014_json_batch(jdict, imgs, imgToAnns, image_ids, shapes, device):
+
+    _, _, height, width = imgs.shape  # batch size, channels, height, width
+    model_time = time.time()
+    model_time = time.time() - model_time
+    # add eval to json
+    evaluator_time = time.time()
+    # Statistics per image
+    for i, image_id in enumerate(image_ids):
+        # Append to pycocotools JSON dictionary
+        # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
+        ann = imgToAnns[image_id]
+        for pred in ann:
+            box = torch.tensor(pred['bbox'], dtype=torch.float).unsqueeze(0)
+            clip_coords(box, (height, width))
+            scale_coords(imgs[i].shape[1:], box, shapes[i][0], shapes[i][1])  # to original shape
+            box = xyxy2xywh(box)  # xywh
+            box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
+            jdict.append({'image_id': image_id,
+                            'category_id': pred['category_id'],
+                            'bbox': box.squeeze().tolist(),
+                            'score': pred['score']
+                        })
+    evaluator_time = time.time() - evaluator_time
+    
+    return model_time, evaluator_time
+
+
+@torch.no_grad()
+def evaluate_yolo_2014_json(imgToAnns, data_loader, device):
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    jdict = []
+    imgIds = []
+    for imgs, _ , paths, shapes in metric_logger.log_every(data_loader, 10, header):
+        image_ids = [ int(Path(image_path).stem.split('_')[-1]) for image_path in paths]
+        imgIds.extend(image_ids)
+        # Evaluate one batch
+        model_time, evaluator_time = eval_yolo_2014_json_batch(jdict, imgs, imgToAnns, image_ids, shapes, device)
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+    # imgIds = [int(Path(x).stem.split('_')[-1]) for x in data_loader.dataset.img_files]
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    # coco evel
+    cocoEval = coco_eval_json(annotation_path, jdict, imgIds)
+    return cocoEval
 
 
 def dg_evaluate(args):
@@ -395,7 +468,13 @@ def dg_evaluate(args):
     device = torch.device(args.device)
     model.to(device)
     
-    if args.bin_evaluate:
+    if args.hw_evaluate:
+        resAnn = json.load(open(args.json_result))
+        imgToAnns = defaultdict(list)
+        for ann in resAnn:
+            imgToAnns[ann['image_id']].append(ann)
+        evaluate_yolo_2014_json(imgToAnns, data_loader_test, device=device)
+    elif args.bin_evaluate:
         if (args.model == 'yolo'):
             if (args.dataset == 'coco2014'):
                 evaluate_bin_yolo_2014(model, data_loader_test, device=device, bin_folder = args.bin_folder) 
@@ -428,6 +507,8 @@ if __name__ == "__main__":
     parser.add_argument("--rect", help="keep rectangular shapes", action="store_true")
     parser.add_argument("--pretrained", dest="pretrained", help="Use pre-trained models from the modelzoo", action="store_true")
     parser.add_argument("--bin-evaluate", dest="bin_evaluate", help="Only test the model", action="store_true")
+    parser.add_argument("--hw-evaluate", dest="hw_evaluate", help="Only test the model", action="store_true")
+    parser.add_argument('--json-result',default="Yolov3_d_f.json", help='path to result json file')
 
     args = parser.parse_args()
 

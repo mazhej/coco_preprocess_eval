@@ -8,21 +8,23 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/evaluate.py",
             "args": 
             [
                 "--data-path", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/COCO/2017", 
                 "-j", "0",
-                "-b", "4",
+                "-b", "1",
                 "--pretrained",
                 // "--model", "fasterrcnn_resnet50_fpn",
                 "--model", "yolo",
                 "--dataset", "coco2014",
                 // "--rect",
-                "--weights", "yolo_weights/ultralytics68.pt",
-                "--cfg", "yolo_cfg/yolov3-spp.cfg",
+                "--weights", "yolo_weights/yolov3.weights",
+                "--cfg", "yolo_cfg/yolov3.cfg",
                 "--bin-evaluate",
-                "--bin-folder", "coco2014_eval_bin"
+                "--bin-folder", "coco2014_eval_bin",
+                "--hw-evaluate",
+                "--json-result", "Yolov3_d_q_thr001_fixed.json"
             ],
             "console": "integratedTerminal",
             // "justMyCode": false

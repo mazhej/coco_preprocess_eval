@@ -1,0 +1,18 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/voc2coco.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--ann_dir", "/media/mehrdad/3dd9d6bb-3b3b-426f-b47f-a87ad0ad8559/ml-data/VOCtrainval_11-May-2012/VOCdevkit/VOC2012/Annotations"
+            ]
+        }
+    ]
+}

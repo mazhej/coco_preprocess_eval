@@ -20,6 +20,7 @@ def load_model(args):
             load_darknet_weights(model, args.weights)
     elif (args.model== 'mobilenetv1_ssd'):
         model = create_mobilenetv1_ssd(len(voc_class_names), is_test=True)
+        model.load('./saved_models/mobilenet-v1-ssd-mp-0_675.pth')
     else:
         model = detection.__dict__[args.model](num_classes=91, pretrained=args.pretrained)
     

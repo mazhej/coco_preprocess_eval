@@ -4,9 +4,9 @@ import pathlib
 import xml.etree.ElementTree as ET
 import cv2
 import os
+import torch.utils.data as data
 
-
-class VOCDataset:
+class VOCDataset(data.Dataset):
 
     def __init__(self, root, transform=None, target_transform=None, is_test=False, keep_difficult=False, label_file=None):
         """Dataset for VOC data.
@@ -65,7 +65,7 @@ class VOCDataset:
             image, boxes, labels = self.transform(image, boxes, labels)
         if self.target_transform:
             boxes, labels = self.target_transform(boxes, labels)
-        return image, boxes, labels
+        return image, boxes, labels, int(image_id)
 
     def get_image(self, index):
         image_id = self.ids[index]

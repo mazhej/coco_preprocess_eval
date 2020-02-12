@@ -16,10 +16,11 @@ from yolo_utils.utils import coco80_to_coco91_class, non_max_suppression, clip_c
 from pathlib import Path
 import utils
 from models import load_model
-from dataset import get_coco_dataloader
+from dataset import get_coco_dataloader, get_voc_dataloader
 
 # from InputOutputHook import Hook
 from collections import defaultdict
+from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd_predictor
 
 coco91class = coco80_to_coco91_class()
 
@@ -40,6 +41,14 @@ def coco_eval_json(annotation_path, jdict, imgIds):
     cocoEval.summarize()
     return cocoEval
 
+def xyxy2xywh_ssd(x):
+    # Convert bounding box format from [x1, y1, x2, y2] to [x, y, w, h]
+    y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
+    y[0] = x[0]
+    y[1] = x[1]
+    y[2] = x[2] - x[0]
+    y[3] = x[3] - x[1]
+    return y
 class ImageList(object):
     """
     Structure that holds a list of images (of possibly
@@ -459,9 +468,54 @@ def evaluate_yolo_2014_json(imgToAnns, data_loader, device):
     return cocoEval
 
 
+@torch.no_grad()
+def evaluate_mobilenet_ssd(model, data_loader, device):
+    
+    model.eval()
+    predictor = create_mobilenetv1_ssd_predictor(model, nms_method='hard', device=device)
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    jdict = []
+    imgIds = []
+    for images, gt_boxes, gt_labels, image_ids in metric_logger.log_every(data_loader, 50, header):
+
+        imgIds.extend(image_ids)
+
+        torch.cuda.synchronize()
+        model_time = time.time()
+        for image, img_id in zip(images, image_ids):
+            boxes, labels, probs = predictor.predict(image)
+            for box, label, prob in zip(boxes, labels, probs):  
+                box = xyxy2xywh_ssd(box)  # xywh
+                jdict.append(   {
+                                "image_id":img_id,
+                                "category_id":int(label),
+                                "bbox":box.cpu().numpy().tolist(),
+                                "score":float(prob)
+                                }
+                            )
+
+        # Evaluate one batch
+        model_time = time.time() - model_time
+        evaluator_time = 0
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    # coco evel
+    # annotation_path = 'VOC2012.json'
+    cocoEval = coco_eval_json('VOC2012.json', jdict, imgIds)
+    return cocoEval
+
+
 def dg_evaluate(args):
     # Loading val dataset
-    data_loader_test = get_coco_dataloader(args)
+    if args.model == "mobilenetv1_ssd":
+        data_loader_test = get_voc_dataloader(args)
+    else:
+        data_loader_test = get_coco_dataloader(args)
     # Loading model
     model = load_model(args)
     # patch_fastrcnn(model)
@@ -486,6 +540,8 @@ def dg_evaluate(args):
                 evaluate_yolo_2014(model, data_loader_test, device=device)
             else:
                 evaluate_yolo_2017(model, data_loader_test, device=device)
+        elif (args.model == "mobilenetv1_ssd"):
+            evaluate_mobilenet_ssd(model, data_loader_test, device=device)
         else: # non Yolo detection included in Torchvision
             evaluate(model, data_loader_test, device=device)
 

@@ -12,3 +12,5 @@ eval_results/*
 jdict_not_resized.json
 jdict_not_resized_highTHR.json
 HW_Results/*.json
+saved_models/*
+

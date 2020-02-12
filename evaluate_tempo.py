@@ -16,10 +16,9 @@ from yolo_utils.utils import coco80_to_coco91_class, non_max_suppression, clip_c
 from pathlib import Path
 import utils
 from models import load_model
-from dataset import get_coco_dataloader
+from dataset import get_coco_dataloader, get_voc_dataloader
 from vision.datasets.voc_dataset import VOCDataset
 #from vision import *
-from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd, create_mobilenetv1_ssd_predictor
 import pathlib
 from vision.utils.misc import str2bool, Timer
 from VOC_group_annotation_by_class import compute_average_precision_per_class , group_annotation_by_class
@@ -164,76 +163,49 @@ def evaluate_bin(model, data_loader, device, bin_folder ):
     torch.set_num_threads(n_threads)
 
 
-def xyxy2xywh_ssd(x):
-    # Convert bounding box format from [x1, y1, x2, y2] to [x, y, w, h]
-    y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
-    y[0] = (x[0] + x[2]) / 2
-    y[1] = (x[1] + x[3]) / 2
-    y[2] = x[2] - x[0]
-    y[3] = x[3] - x[1]
-    return y
-
+from models import voc_class_names
+from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd_predictor
 
 @torch.no_grad()
-def evaluate_mobilenet_ssd(model, data_loader,device):
+def evaluate_mobilenet_ssd(model, data_loader, device):
     
-    eval_path = pathlib.Path('eval_results')
-    eval_path.mkdir(exist_ok=True)
-    timer = Timer()
-    class_names = [name.strip() for name in open('/home/maziar/WA/MLdata/github/pytorch-ssd/models/voc-model-labels.txt').readlines()]
-
-    dataset = VOCDataset('/home/maziar/WA/MLdata/VOCdevkit/VOC2012', is_test=False)
-    true_case_stat, all_gb_boxes, all_difficult_cases = group_annotation_by_class(dataset)
-
-    model = create_mobilenetv1_ssd(len(class_names), is_test=True)                                           #  class_names.index('bird')  dataset.class_names[0]
-    timer.start("Load Model")
-    model.load('/home/maziar/WA/MLdata/mobilenet-v1-ssd-mp-0_675.pth')
-    model = model.to(device)
-    print(f'It took {timer.end("Load Model")} seconds to load the model.')
+    model.eval()
     predictor = create_mobilenetv1_ssd_predictor(model, nms_method='hard', device=device)
-    imgIds = []
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
     jdict = []
-    for i in range(11530,len(dataset)):   
-        
-        print("process image", i)
-        timer.start("Load Image")
-        image = dataset.get_image(i)
-        print("Load Image: {:4f} seconds.".format(timer.end("Load Image")))
-        timer.start("Predict")
-        boxes, labels, probs = predictor.predict(image)
-        img_id = int(dataset.ids[i])
-        imgIds.append(img_id)
-        for (box, label, prob) in zip(boxes,labels,probs):  
-            box = xyxy2xywh_ssd(box)  # xywh
-            jdict.append({
-            "image_id":img_id,
-            "category_id":int(label),
-            "bbox":box.cpu().numpy().tolist(),
-            "score":float(prob)})
+    imgIds = []
+    for images, gt_boxes, gt_labels, image_ids in metric_logger.log_every(data_loader, 10, header):
 
-            # jdict["annotations"]['bbox'].append(box.cpu().numpy().tolist())
-            # jdict["annotations"]['category_id'].append(int(label))
-            
-    # with open("predicted.json", 'w') as f:
-    #     json.dump(jdict,f)
-    annotation_path = "/home/maziar/WA/Git/coco_preprocess_eval/output.json"
-    cocoEval = coco_eval_json(annotation_path, jdict, imgIds)
+        imgIds.extend(image_ids)
+
+        torch.cuda.synchronize()
+        model_time = time.time()
+        for image, img_id in zip(images, image_ids):
+            boxes, labels, probs = predictor.predict(image)
+            for box, label, prob in zip(boxes, labels, probs):  
+                box = xyxy2xywh_ssd(box)  # xywh
+                jdict.append(   {
+                                "image_id":img_id,
+                                "category_id":int(label),
+                                "bbox":box.cpu().numpy().tolist(),
+                                "score":float(prob)
+                                }
+                            )
+
+        # Evaluate one batch
+        model_time = time.time() - model_time
+        evaluator_time = 0
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    # coco evel
+    # annotation_path = 'VOC2012.json'
+    cocoEval = coco_eval_json('VOC2012.json', jdict, imgIds)
     return cocoEval
-
-
-
-
-    
-        
-
-            
-            
-
-
-       
-       
-       
-       
        
        
     #     print("Prediction: {:4f} seconds.".format(timer.end("Predict")))
@@ -245,7 +217,7 @@ def evaluate_mobilenet_ssd(model, data_loader,device):
     #         boxes + 1.0  # matlab's indexes start from 1
     #     ], dim=1))
     # results = torch.cat(results)
-    # for class_index, class_name in enumerate(class_names):
+    # for class_index, class_name in enumerate(voc_class_names'):
     #     if class_index == 0: continue  # ignore background
     #     prediction_path = eval_path / f"det_test_{class_name}.txt"
     #     with open(prediction_path, "w") as f:
@@ -259,7 +231,7 @@ def evaluate_mobilenet_ssd(model, data_loader,device):
     #             )
     # aps = []
     # print("\n\nAverage Precision Per-class:")
-    # for class_index, class_name in enumerate(class_names):
+    # for class_index, class_name in enumerate(voc_class_names'):
     #     if class_index == 0:
     #         continue
     #     prediction_path = eval_path / f"det_test_{class_name}.txt"
@@ -368,7 +340,7 @@ def evaluate_yolo_2017(model, data_loader, device):
             image_id = int(targets[si]['image_id'])
             box = pred[:, :4].clone()  # xyxy
             # scale_coords(transformed_shape, box, shapes[si][0], shapes[si][1])  # to original shape
-            # box = xyxy2xywh(box)  # xywh
+            box = xyxy2xywh(box)  # xywh
             # box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
             for di, d in enumerate(pred):
                 box_T = [floatn(x, 3) for x in box[di]]
@@ -507,8 +479,8 @@ def eval_yolo_2014_batch(jdict, model, imgs, image_ids, shapes, device):
 
 def dg_evaluate(args):
     # Loading val dataset
-    if args.model == "mobilenet_v1":
-        data_loader_test = VOCDataset('/home/maziar/WA/MLdata/VOCdevkit/VOC2012')
+    if args.model == "mobilenetv1_ssd":
+        data_loader_test = get_voc_dataloader(args)
     else:
         data_loader_test = get_coco_dataloader(args)
     # Loading model
@@ -529,10 +501,8 @@ def dg_evaluate(args):
                 evaluate_yolo_2014(model, data_loader_test, device=device)
             else:
                 evaluate_yolo_2017(model, data_loader_test, device=device)
-        elif (args.model == "mobilenet_v1"):
-            data_loader_test = VOCDataset('/home/maziar/WA/MLdata/VOCdevkit/VOC2012')
-            evaluate_mobilenet_ssd(model,data_loader_test,device= device)
-
+        elif (args.model == "mobilenetv1_ssd"):
+            evaluate_mobilenet_ssd(model, data_loader_test, device=device)
         else: # non Yolo detection included in Torchvision
             evaluate(model, data_loader_test, device=device)
 
@@ -554,6 +524,8 @@ if __name__ == "__main__":
     parser.add_argument("--rect", help="keep rectangular shapes", action="store_true")
     parser.add_argument("--pretrained", dest="pretrained", help="Use pre-trained models from the modelzoo", action="store_true")
     parser.add_argument("--bin-evaluate", dest="bin_evaluate", help="Only test the model", action="store_true")
+    parser.add_argument("--hw-evaluate", dest="hw_evaluate", help="Only test the model", action="store_true")
+    parser.add_argument('--json-result',default="Yolov3_d_f.json", help='path to result json file')
 
     args = parser.parse_args()
 

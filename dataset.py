@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from yolo_utils.datasets import LoadImagesAndLabels
 import transforms as T
 from coco_utils import get_coco, get_coco_kp
+from vision.datasets.voc_dataset import VOCDataset
 
 def collate_fn(batch):
     return tuple(zip(*batch))
@@ -41,4 +42,14 @@ def get_coco_dataloader(args):
                                     sampler=test_sampler, 
                                     num_workers=args.workers,
                                     collate_fn=collate_fn)
+    return data_loader_test
+
+def get_voc_dataloader(args):
+    dataset_test = VOCDataset(args.data_path)
+    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+    data_loader_test = DataLoader(dataset_test, 
+                        batch_size=args.batch_size,
+                        sampler=test_sampler, 
+                        num_workers=args.workers,
+                        collate_fn=collate_fn)
     return data_loader_test
